@@ -7,68 +7,95 @@
   </head>
   <body>
     <script>
+      const SEARXNG_INSTANCES = [
+        "https://search.rhscz.eu/search",
+        "https://search.sapti.me/search",
+        "https://searxng.site/search",
+        "https://search.bus-hit.me/search",
+      ];
+
+      const UA =
+        "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+
       /**
-       * Fetch with retry and exponential backoff for rate limiting.
+       * Try a single fetch with one retry on 429.
        */
-      async function fetchWithRetry(url, options, maxRetries = 3) {
-        for (let i = 0; i < maxRetries; i++) {
-          const response = await fetch(url, options);
-          if (response.ok) return response;
-          if (response.status === 429 && i < maxRetries - 1) {
-            const delay = (i + 1) * 2000;
-            await new Promise((r) => setTimeout(r, delay));
-            continue;
-          }
-          throw new Error(`SearXNG returned HTTP ${response.status}`);
+      async function tryFetch(url, options) {
+        let response = await fetch(url, options);
+        if (response.status === 429) {
+          await new Promise((r) => setTimeout(r, 2000));
+          response = await fetch(url, options);
         }
+        return response;
       }
 
       /**
-       * Search the web using a SearXNG instance.
+       * Search across multiple SearXNG instances with fallback.
        */
       async function searchSearXNG(query, lang) {
-        const baseUrl = "https://search.rhscz.eu/search";
         const params = new URLSearchParams({
           q: query,
           format: "json",
           language: lang || "auto",
         });
 
-        const response = await fetchWithRetry(
-          `${baseUrl}?${params.toString()}`,
-          {
-            headers: {
-              Accept: "application/json",
-              "User-Agent":
-                "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
-            },
+        const fetchOptions = {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": UA,
+          },
+        };
+
+        let lastError = null;
+
+        for (const instance of SEARXNG_INSTANCES) {
+          try {
+            const response = await tryFetch(
+              `${instance}?${params.toString()}`,
+              fetchOptions
+            );
+
+            if (!response.ok) {
+              lastError = `${instance}: HTTP ${response.status}`;
+              continue;
+            }
+
+            const data = await response.json();
+
+            if (!data.results || data.results.length === 0) {
+              continue;
+            }
+
+            const topResults = data.results.slice(0, 10).map((r) => ({
+              title: r.title || "No title",
+              url: r.url || "",
+              snippet: r.content || "",
+              engine: r.engine || "unknown",
+            }));
+
+            let formatted = "";
+            topResults.forEach((r, i) => {
+              formatted += `${i + 1}. **${r.title}**\n`;
+              if (r.snippet) {
+                formatted += `   ${r.snippet}\n`;
+              }
+              formatted += `   URL: ${r.url}\n`;
+              formatted += `   Source: ${r.engine}\n\n`;
+            });
+
+            return { result: formatted.trim() };
+          } catch (e) {
+            lastError = `${instance}: ${e.message}`;
+            continue;
           }
-        );
-
-        const data = await response.json();
-
-        if (!data.results || data.results.length === 0) {
-          return { result: "No results found for this query." };
         }
 
-        const topResults = data.results.slice(0, 10).map((r) => ({
-          title: r.title || "No title",
-          url: r.url || "",
-          snippet: r.content || "",
-          engine: r.engine || "unknown",
-        }));
-
-        let formatted = "";
-        topResults.forEach((r, i) => {
-          formatted += `${i + 1}. **${r.title}**\n`;
-          if (r.snippet) {
-            formatted += `   ${r.snippet}\n`;
-          }
-          formatted += `   URL: ${r.url}\n`;
-          formatted += `   Source: ${r.engine}\n\n`;
-        });
-
-        return { result: formatted.trim() };
+        if (lastError) {
+          throw new Error(
+            `All SearXNG instances failed. Last error: ${lastError}`
+          );
+        }
+        return { result: "No results found for this query." };
       }
 
       window["ai_edge_gallery_get_result"] = async (data) => {
