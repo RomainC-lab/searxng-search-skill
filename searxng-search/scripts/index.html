@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SearXNG Search</title>
+  </head>
+  <body>
+    <script>
+      /**
+       * Search the web using a SearXNG instance.
+       * @param {string} query - The search query.
+       * @param {string} lang - The language code (default: "auto").
+       * @returns {Promise<Object>} The search results or an error.
+       */
+      async function searchSearXNG(query, lang) {
+        const baseUrl = "https://search.rhscz.eu/search";
+        const params = new URLSearchParams({
+          q: query,
+          format: "json",
+          language: lang || "auto",
+        });
+
+        const response = await fetch(`${baseUrl}?${params.toString()}`, {
+          headers: {
+            Accept: "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`SearXNG returned HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.results || data.results.length === 0) {
+          return { result: "No results found for this query." };
+        }
+
+        const topResults = data.results.slice(0, 10).map((r) => ({
+          title: r.title || "No title",
+          url: r.url || "",
+          snippet: r.content || "",
+          engine: r.engine || "unknown",
+        }));
+
+        let formatted = "";
+        topResults.forEach((r, i) => {
+          formatted += `${i + 1}. **${r.title}**\n`;
+          if (r.snippet) {
+            formatted += `   ${r.snippet}\n`;
+          }
+          formatted += `   URL: ${r.url}\n`;
+          formatted += `   Source: ${r.engine}\n\n`;
+        });
+
+        return { result: formatted.trim() };
+      }
+
+      window["ai_edge_gallery_get_result"] = async (data) => {
+        try {
+          const jsonData = JSON.parse(data);
+
+          if (!jsonData.query) {
+            return JSON.stringify({ error: "No search query provided." });
+          }
+
+          const searchResult = await searchSearXNG(
+            jsonData.query,
+            jsonData.lang
+          );
+          return JSON.stringify(searchResult);
+        } catch (e) {
+          console.error(e);
+          return JSON.stringify({
+            error: `Search failed: ${e.message}`,
+          });
+        }
+      };
+    </script>
+  </body>
+</html>
